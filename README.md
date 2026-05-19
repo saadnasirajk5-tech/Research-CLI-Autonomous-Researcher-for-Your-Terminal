@@ -26,7 +26,7 @@ Research-CLI uses a **multi-agent graph architecture** where each agent has one 
               ┌──────────┼──────────┐
               ▼          ▼          ▼
         ┌──────────┐┌──────────┐┌──────────┐
-        │Researcher││Researcher││Researcher│  Parallel specialists
+        │Researcher││Researcher││Researcher│  Parallel via ThreadPoolExecutor
         │  (Web)   ││ (Stats)  ││ (Views)  │  Each has ONE focused task
         └────┬─────┘└────┬─────┘└────┬─────┘
              │           │           │
@@ -98,6 +98,17 @@ research --list-sessions
 research --resume abc123
 ```
 
+### Python API
+
+```python
+from research_cli import Config, ResearchGraph
+
+config = Config()
+graph = ResearchGraph(config)
+result = graph.run("What are the latest advances in fusion energy?")
+print(result["report"])
+```
+
 ## The Self-Correction Loop (What Makes This Different)
 
 Every claim goes through a **Verify → Correct** cycle:
@@ -132,6 +143,12 @@ This turns a hallucination-prone 3B model into a fact-checker. You see every ver
 src/research_cli/
 ├── main.py              # CLI entry point
 ├── config.py            # Centralized configuration
+├── prompts/             # System prompt templates (.txt files)
+│   ├── planner.txt
+│   ├── researcher.txt
+│   ├── critic.txt
+│   ├── writer.txt
+│   └── validator.txt
 ├── agents/
 │   ├── planner.py       # DAG task generation
 │   ├── researcher.py    # Parallel web research
@@ -140,7 +157,7 @@ src/research_cli/
 │   └── writer.py        # Report synthesis
 ├── tools/
 │   ├── search.py        # DuckDuckGo wrapper
-│   ├── scraper.py       # Crawl4AI wrapper
+│   ├── scraper.py       # Crawl4AI + urllib fallback
 │   └── rag.py           # ChromaDB RAG
 ├── graph/
 │   ├── state.py         # LangGraph state definition

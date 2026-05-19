@@ -5,8 +5,7 @@ The state flows through the graph: Planner -> Researchers -> Critic -> Validator
 Each node reads and writes specific fields. TypedDict enables LangGraph's state management.
 """
 
-from typing import TypedDict, Optional, Annotated
-import operator
+from typing import TypedDict, Optional
 
 
 class SubTask(TypedDict):
@@ -29,6 +28,7 @@ class Finding(TypedDict):
 class TaskResult(TypedDict):
     """The output of a researcher for a sub-task."""
     task_id: str
+    description: str
     findings: list[Finding]
     summary: str
     needs_more_research: bool
@@ -42,13 +42,13 @@ class ResearchState(TypedDict):
     """
     The complete state of a research session.
 
-    This is the LangGraph state object that flows through all nodes.
-    Each field is annotated with a reducer for parallel updates.
+    task_results and findings use replace semantics (no operator.add).
+    This prevents duplicate accumulation when the critic triggers retries.
     """
     query: str
     subtasks: list[SubTask]
-    task_results: Annotated[list[TaskResult], operator.add]
-    findings: Annotated[list[Finding], operator.add]
+    task_results: list[TaskResult]
+    findings: list[Finding]
     report: str
     current_task: Optional[str]
     all_tasks_complete: bool

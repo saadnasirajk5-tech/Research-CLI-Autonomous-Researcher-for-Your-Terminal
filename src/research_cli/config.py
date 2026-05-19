@@ -3,6 +3,8 @@ Configuration for Research-CLI.
 
 All settings are centralized here for easy tuning.
 Small models need tighter constraints than GPT-4.
+
+Prompts are loaded from template files in prompts/ directory.
 """
 
 import os
@@ -24,21 +26,12 @@ class PlannerConfig:
     """Planner agent settings."""
     max_subtasks: int = 8
     min_subtasks: int = 3
-    system_prompt: str = """You are a Research Planner. Break the user's query into a directed acyclic graph (DAG) of independent sub-tasks.
+    system_prompt: str = ""
 
-Rules:
-1. Each sub-task must be specific and answerable independently.
-2. Sub-tasks should cover different angles: facts, comparisons, recent data, opposing views.
-3. Output ONLY valid JSON with no markdown formatting.
-4. Each sub-task needs: id, description, search_query, dependencies (list of task IDs this depends on).
-
-Example output:
-{{
-  "subtasks": [
-    {{"id": "t1", "description": "Find historical background on X", "search_query": "X history timeline key events", "dependencies": []}},
-    {{"id": "t2", "description": "Compare viewpoints on Y", "search_query": "Y debate pros cons different perspectives", "dependencies": []}}
-  ]
-}}"""
+    def __post_init__(self):
+        if not self.system_prompt:
+            from research_cli.prompts import load_prompt
+            self.system_prompt = load_prompt("planner")
 
 
 @dataclass
@@ -47,70 +40,46 @@ class ResearcherConfig:
     max_results_per_search: int = 5
     max_pages_to_scrape: int = 3
     max_tokens_per_page: int = 4000
-    system_prompt: str = """You are a Research Specialist. Given a sub-task and search results, extract the most relevant facts, statistics, and quotes.
+    system_prompt: str = ""
 
-Rules:
-1. Extract ONLY information directly supported by the provided sources.
-2. Include citations (source URL) for every claim.
-3. Be specific: prefer numbers, dates, names over vague statements.
-4. If the sources don't contain useful info, say "INSUFFICIENT_DATA".
-5. Output ONLY valid JSON with no markdown formatting.
-
-Output format:
-{{
-  "findings": [
-    {{"claim": "specific fact", "source_url": "https://...", "confidence": "high|medium|low"}}
-  ],
-  "summary": "brief summary of what was found",
-  "needs_more_research": true/false
-}}"""
+    def __post_init__(self):
+        if not self.system_prompt:
+            from research_cli.prompts import load_prompt
+            self.system_prompt = load_prompt("researcher")
 
 
 @dataclass
 class CriticConfig:
     """Critic agent settings."""
-    system_prompt: str = """You are a Research Critic. Audit the researcher's findings against the original sub-task.
+    system_prompt: str = ""
 
-Check:
-1. Does the finding directly address the sub-task?
-2. Are there citations for each claim?
-3. Is the data specific (numbers, dates, names) or vague?
-4. Are there any unsupported claims?
-
-Output ONLY valid JSON:
-{{
-  "passed": true/false,
-  "score": 0-10,
-  "issues": ["list of problems"],
-  "feedback": "specific instructions for improvement if failed"
-}}"""
+    def __post_init__(self):
+        if not self.system_prompt:
+            from research_cli.prompts import load_prompt
+            self.system_prompt = load_prompt("critic")
 
 
 @dataclass
 class WriterConfig:
     """Writer agent settings."""
-    system_prompt: str = """You are a Research Writer. Synthesize verified findings into a comprehensive report.
+    system_prompt: str = ""
 
-Rules:
-1. Structure: Executive Summary, Key Findings, Detailed Analysis, Sources.
-2. Every claim must be cited with its source.
-3. Acknowledge uncertainties and conflicting data.
-4. Write in clear, professional prose.
-5. Do NOT invent information not present in the findings."""
+    def __post_init__(self):
+        if not self.system_prompt:
+            from research_cli.prompts import load_prompt
+            self.system_prompt = load_prompt("writer")
 
 
 @dataclass
 class ValidatorConfig:
     """Self-correction validator settings."""
     max_retries: int = 2
-    system_prompt: str = """You are a Fact Validator. Check if a claim is supported by the provided source text.
+    system_prompt: str = ""
 
-Output ONLY valid JSON:
-{{
-  "supported": true/false,
-  "reason": "explanation",
-  "corrected_claim": "rewritten claim if not supported, or empty if supported"
-}}"""
+    def __post_init__(self):
+        if not self.system_prompt:
+            from research_cli.prompts import load_prompt
+            self.system_prompt = load_prompt("validator")
 
 
 @dataclass

@@ -9,7 +9,7 @@ Each node is an agent, edges define the flow.
 """
 
 import uuid
-from typing import Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from langgraph.graph import StateGraph, END
 from research_cli.config import Config
 from research_cli.graph.state import ResearchState
@@ -28,7 +28,7 @@ class ResearchGraph:
 
     Workflow:
     1. PLANNER: Break query into sub-tasks (DAG)
-    2. RESEARCHERS: Execute sub-tasks in parallel
+    2. RESEARCHERS: Execute sub-tasks in parallel via ThreadPoolExecutor
     3. CRITIC: Audit each result
     4. VALIDATOR: Fact-check claims against sources
     5. WRITER: Synthesize final report
@@ -108,29 +108,92 @@ class ResearchGraph:
         self.persistence.save_state(state)
         return {"subtasks": subtasks}
 
-    def _research_node(self, state: ResearchState) -> dict:
-        """Research node: execute sub-tasks (parallel in concept, sequential for small models)."""
-        task_results = []
-        for task in state["subtasks"]:
-            state["current_task"] = task["id"]
-            result = self.researcher.research(
+    def _execute_single_task(self, task: dict) -> dict:
+        """
+        Execute one research sub-task.
+
+        Used by ThreadPoolExecutor for parallel execution.
+        Each task runs independently with its own researcher call.
+
+        Parameters:
+            task: A sub-task dict with id, description, search_query.
+
+        Returns:
+            TaskResult dict with findings, summary, and metadata.
+        """
+        result = self.researcher.research(
+            task_id=task["id"],
+            description=task["description"],
+            search_query=task["search_query"],
+        )
+        result["description"] = task["description"]
+        result["retry_count"] = 0
+        for finding in result.get("findings", []):
+            save_finding_to_disk(finding, self.config)
+            self.rag.add_finding(
+                finding.get("claim", ""),
                 task_id=task["id"],
-                description=task["description"],
-                search_query=task["search_query"],
+                source_url=finding.get("source_url", ""),
             )
-            result["description"] = task["description"]
-            result["retry_count"] = 0
-            task_results.append(result)
-            for finding in result.get("findings", []):
-                save_finding_to_disk(finding, self.config)
-                self.rag.add_finding(
-                    finding.get("claim", ""),
-                    task_id=task["id"],
-                    source_url=finding.get("source_url", ""),
-                )
-        state["task_results"] = task_results
+        return result
+
+    def _research_node(self, state: ResearchState) -> dict:
+        """
+        Research node: execute sub-tasks in parallel.
+
+        If revision_task_id is set (critic sent back a failed task),
+        only re-run that specific task. Otherwise run all tasks.
+        Uses ThreadPoolExecutor for true parallel execution.
+        """
+        revision_id = state.get("revision_task_id")
+
+        if revision_id:
+            tasks_to_run = [
+                t for t in state["subtasks"] if t["id"] == revision_id
+            ]
+        else:
+            tasks_to_run = state["subtasks"]
+
+        task_results = []
+        max_workers = min(3, len(tasks_to_run))
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(self._execute_single_task, task): task
+                for task in tasks_to_run
+            }
+            for future in as_completed(futures):
+                task = futures[future]
+                try:
+                    result = future.result()
+                    task_results.append(result)
+                except Exception as e:
+                    task_results.append({
+                        "task_id": task["id"],
+                        "description": task["description"],
+                        "findings": [],
+                        "summary": f"Research failed: {str(e)}",
+                        "needs_more_research": True,
+                        "critic_passed": False,
+                        "critic_score": 0,
+                        "critic_feedback": str(e),
+                        "retry_count": 0,
+                    })
+
+        if revision_id:
+            existing = {
+                r["task_id"]: r for r in state.get("task_results", [])
+                if r["task_id"] != revision_id
+            }
+            for new_result in task_results:
+                existing[new_result["task_id"]] = new_result
+            merged_results = list(existing.values())
+        else:
+            merged_results = task_results
+
+        state["task_results"] = merged_results
         self.persistence.save_state(state)
-        return {"task_results": task_results}
+        return {"task_results": merged_results}
 
     def _critic_node(self, state: ResearchState) -> dict:
         """Critic node: audit all task results."""
@@ -167,20 +230,28 @@ class ResearchGraph:
     def _validate_node(self, state: ResearchState) -> dict:
         """Validator node: fact-check all findings."""
         all_findings = []
+        updated_results = []
         for result in state["task_results"]:
             findings = result.get("findings", [])
             validated = self.validator.validate_batch(findings)
             result["findings"] = validated
             all_findings.extend(validated)
-        state["task_results"] = state["task_results"]
+            updated_results.append(result)
+        state["task_results"] = updated_results
         state["findings"] = all_findings
         state["all_tasks_complete"] = True
         self.persistence.save_state(state)
         return {"findings": all_findings, "all_tasks_complete": True}
 
     def _writer_node(self, state: ResearchState) -> dict:
-        """Writer node: generate the final report."""
-        report = self.writer.write_report(state["query"], state["task_results"])
+        """
+        Writer node: generate the final report.
+
+        Passes validated findings (state["findings"]) to the writer,
+        not the raw task_results. This ensures the writer only sees
+        claims that passed the validator's fact-check.
+        """
+        report = self.writer.write_report(state["query"], state["findings"])
         state["report"] = report
         self.persistence.save_state(state)
         return {"report": report}

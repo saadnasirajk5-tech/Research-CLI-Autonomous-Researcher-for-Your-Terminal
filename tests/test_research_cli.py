@@ -2,14 +2,18 @@
 Tests for Research-CLI.
 
 Tests cover:
-1. Config initialization
+1. Config initialization and prompt loading
 2. Planner parsing
 3. Researcher output parsing
 4. Critic evaluation
 5. Validator logic
 6. State persistence
 7. RAG storage
-8. Full graph workflow (mocked)
+8. Scraper
+9. Search tool
+10. Graph workflow (mocked)
+11. Parallel execution
+12. Writer with validated findings
 """
 
 import json
@@ -22,7 +26,6 @@ from research_cli.config import Config
 from research_cli.graph.state import ResearchState
 from research_cli.storage.persistence import StatePersistence, save_finding_to_disk
 from research_cli.tools.search import search_web
-from research_cli.tools.rag import LocalRAG
 
 
 class TestConfig:
@@ -43,6 +46,53 @@ class TestConfig:
             assert config.storage.findings_dir.exists()
             assert config.storage.sessions_dir.exists()
             assert config.storage.chroma_dir.exists()
+
+    def test_prompts_loaded_from_files(self):
+        config = Config()
+        assert len(config.planner.system_prompt) > 50
+        assert len(config.researcher.system_prompt) > 50
+        assert len(config.critic.system_prompt) > 50
+        assert len(config.writer.system_prompt) > 50
+        assert len(config.validator.system_prompt) > 50
+
+
+class TestPromptLoader:
+    """Test the prompt loading system."""
+
+    def test_load_planner_prompt(self):
+        from research_cli.prompts import load_prompt
+        prompt = load_prompt("planner")
+        assert "Research Planner" in prompt
+        assert "subtasks" in prompt
+
+    def test_load_researcher_prompt(self):
+        from research_cli.prompts import load_prompt
+        prompt = load_prompt("researcher")
+        assert "Research Specialist" in prompt
+        assert "findings" in prompt
+
+    def test_load_critic_prompt(self):
+        from research_cli.prompts import load_prompt
+        prompt = load_prompt("critic")
+        assert "Research Critic" in prompt
+        assert "passed" in prompt
+
+    def test_load_writer_prompt(self):
+        from research_cli.prompts import load_prompt
+        prompt = load_prompt("writer")
+        assert "Research Writer" in prompt
+        assert "Executive Summary" in prompt
+
+    def test_load_validator_prompt(self):
+        from research_cli.prompts import load_prompt
+        prompt = load_prompt("validator")
+        assert "Fact Validator" in prompt
+        assert "supported" in prompt
+
+    def test_load_nonexistent_prompt(self):
+        from research_cli.prompts import load_prompt
+        with pytest.raises(FileNotFoundError):
+            load_prompt("nonexistent_prompt")
 
 
 class TestPlannerParsing:
@@ -287,6 +337,7 @@ class TestRAG:
             config = Config()
             config.storage.data_dir = Path(tmpdir)
             config.initialize()
+            from research_cli.tools.rag import LocalRAG
             rag = LocalRAG(config)
             rag.add_finding("The capital of France is Paris.", task_id="t1", source_url="https://example.com")
             results = rag.query("capital France Paris", n_results=1)
@@ -299,9 +350,85 @@ class TestRAG:
             config = Config()
             config.storage.data_dir = Path(tmpdir)
             config.initialize()
+            from research_cli.tools.rag import LocalRAG
             rag = LocalRAG(config)
             rag.add_finding("Finding for task one", task_id="t1")
             rag.add_finding("Finding for task two", task_id="t2")
             results = rag.query("finding", n_results=5, task_id="t1")
             for r in results:
                 assert r["task_id"] == "t1"
+
+
+class TestGraphWorkflow:
+    """Test the LangGraph workflow structure."""
+
+    def test_graph_builds(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = Config()
+            config.storage.data_dir = Path(tmpdir)
+            config.initialize()
+            from research_cli.graph.workflow import ResearchGraph
+            graph = ResearchGraph(config)
+            assert graph.graph is not None
+
+    def test_state_no_operator_add(self):
+        """Verify state uses replace semantics, not operator.add."""
+        from research_cli.graph.state import ResearchState
+        import typing
+        hints = typing.get_type_hints(ResearchState)
+        task_results_type = str(hints.get("task_results", ""))
+        assert "operator" not in task_results_type.lower()
+        assert "add" not in task_results_type.lower()
+
+    def test_state_has_revision_fields(self):
+        """Verify state has revision_task_id for targeted retries."""
+        import typing
+        from research_cli.graph.state import ResearchState
+        hints = typing.get_type_hints(ResearchState)
+        assert "revision_task_id" in hints
+        assert "needs_revision" in hints
+
+    def test_writer_uses_findings_not_task_results(self):
+        """Verify writer node passes findings, not raw task_results."""
+        import inspect
+        from research_cli.graph.workflow import ResearchGraph
+        source = inspect.getsource(ResearchGraph._writer_node)
+        assert 'state["findings"]' in source
+        assert 'state["task_results"]' not in source
+
+    def test_research_uses_thread_pool(self):
+        """Verify research node uses ThreadPoolExecutor for parallelism."""
+        import inspect
+        from research_cli.graph.workflow import ResearchGraph
+        source = inspect.getsource(ResearchGraph._research_node)
+        assert "ThreadPoolExecutor" in source
+
+    def test_research_filters_by_revision_id(self):
+        """Verify research node only retries the failed task."""
+        import inspect
+        from research_cli.graph.workflow import ResearchGraph
+        source = inspect.getsource(ResearchGraph._research_node)
+        assert "revision_task_id" in source or "revision_id" in source
+
+
+class TestPackageExports:
+    """Test that __init__.py exports the public API."""
+
+    def test_exports_config(self):
+        from research_cli import Config
+        assert Config is not None
+
+    def test_exports_research_graph(self):
+        from research_cli import ResearchGraph
+        assert ResearchGraph is not None
+
+    def test_exports_state_types(self):
+        from research_cli import ResearchState, SubTask, Finding, TaskResult
+        assert ResearchState is not None
+        assert SubTask is not None
+        assert Finding is not None
+        assert TaskResult is not None
+
+    def test_exports_main(self):
+        from research_cli import main
+        assert callable(main)

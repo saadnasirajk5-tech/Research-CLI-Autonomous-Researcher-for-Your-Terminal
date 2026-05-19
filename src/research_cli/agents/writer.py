@@ -1,7 +1,7 @@
 """
 Writer Agent - The Synthesizer.
 
-Compiles all verified findings into a comprehensive research report.
+Compiles all validated findings into a comprehensive research report.
 Only runs after the Critic confirms all tasks are complete.
 Uses structured output for consistent report formatting.
 """
@@ -14,7 +14,7 @@ class WriterAgent:
     """
     Synthesizes verified findings into a professional research report.
 
-    The writer receives all validated findings organized by sub-task.
+    The writer receives validated findings (post-validator), not raw results.
     It produces a structured report with:
     - Executive summary
     - Key findings (bullet points)
@@ -33,38 +33,34 @@ class WriterAgent:
         )
         self.writer_config = self.config.writer
 
-    def write_report(self, query: str, task_results: list[dict]) -> str:
+    def write_report(self, query: str, findings: list[dict]) -> str:
         """
         Generate the final research report.
 
         Parameters:
             query: The original user query.
-            task_results: List of all completed task results with findings.
+            findings: List of validated finding dicts (post-validator).
 
         Returns:
             The formatted research report as a string.
         """
-        prompt = self._build_prompt(query, task_results)
+        prompt = self._build_prompt(query, findings)
         response = self.model.invoke(prompt)
         return response.content if hasattr(response, "content") else str(response)
 
-    def _build_prompt(self, query: str, task_results: list[dict]) -> str:
-        """Build the writer prompt with all findings."""
+    def _build_prompt(self, query: str, findings: list[dict]) -> str:
+        """Build the writer prompt with validated findings."""
         findings_text = ""
-        for i, result in enumerate(task_results):
-            findings_text += f"\n=== Task {i + 1}: {result.get('task_id', '')} ===\n"
-            findings_text += f"Description: {result.get('description', '')}\n\n"
-            for f in result.get("findings", []):
-                validated = "[VERIFIED]" if f.get("validated") else "[UNVERIFIED]"
-                findings_text += f"  {validated} {f.get('claim', '')}\n"
-                findings_text += f"    Source: {f.get('source_url', 'N/A')}\n"
-                findings_text += f"    Confidence: {f.get('confidence', 'unknown')}\n\n"
-            findings_text += f"Summary: {result.get('summary', '')}\n"
+        for i, f in enumerate(findings):
+            validated = "[VERIFIED]" if f.get("validated") else "[UNVERIFIED]"
+            findings_text += f"  {validated} {f.get('claim', '')}\n"
+            findings_text += f"    Source: {f.get('source_url', 'N/A')}\n"
+            findings_text += f"    Confidence: {f.get('confidence', 'unknown')}\n\n"
         return f"""{self.writer_config.system_prompt}
 
 Original research query: "{query}"
 
-Verified findings organized by sub-task:
+Validated findings:
 {findings_text}
 
 Write a comprehensive research report. Include:
