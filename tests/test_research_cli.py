@@ -243,7 +243,7 @@ class TestStatePersistence:
 class TestSearchTool:
     """Test the search tool."""
 
-    @patch("research_cli.tools.search.DDGS")
+    @patch("research_cli.tools.search.DDGS_CLASS")
     def test_search_web(self, mock_ddgs):
         mock_instance = MagicMock()
         mock_instance.__enter__ = MagicMock(return_value=mock_instance)
@@ -260,6 +260,22 @@ class TestSearchTool:
         results = search_web("", max_results=1)
         assert len(results) == 1
         assert "Error" in results[0]["title"]
+
+
+class TestScraper:
+    """Test the scraper tool."""
+
+    def test_empty_url(self):
+        from research_cli.tools.scraper import scrape_page
+        result = scrape_page("")
+        assert "Empty URL" in result
+
+    def test_fallback_scrape(self):
+        from research_cli.tools.scraper import _html_to_text
+        html = "<html><body><h1>Hello</h1><p>World</p></body></html>"
+        text = _html_to_text(html)
+        assert "Hello" in text
+        assert "World" in text
 
 
 class TestRAG:

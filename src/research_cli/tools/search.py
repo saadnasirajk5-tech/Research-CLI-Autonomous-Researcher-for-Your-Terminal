@@ -5,11 +5,23 @@ Provides web search without API keys.
 Returns titles, snippets, and URLs for further scraping.
 """
 
-from duckduckgo_search import DDGS
-from research_cli.config import Config
+DDGS_AVAILABLE = False
+DDGS_CLASS = None
+
+try:
+    from ddgs import DDGS
+    DDGS_CLASS = DDGS
+    DDGS_AVAILABLE = True
+except ImportError:
+    try:
+        from duckduckgo_search import DDGS
+        DDGS_CLASS = DDGS
+        DDGS_AVAILABLE = True
+    except ImportError:
+        pass
 
 
-def search_web(query: str, max_results: int = 5, config: Config | None = None) -> list[dict]:
+def search_web(query: str, max_results: int = 5, config=None) -> list[dict]:
     """
     Search the web using DuckDuckGo.
 
@@ -22,8 +34,10 @@ def search_web(query: str, max_results: int = 5, config: Config | None = None) -
         List of dicts with keys: title, snippet, url.
     """
     results = []
+    if not DDGS_AVAILABLE:
+        return [{"title": "Search Unavailable", "snippet": "Install ddgs: pip install ddgs", "url": ""}]
     try:
-        with DDGS() as ddgs:
+        with DDGS_CLASS() as ddgs:
             ddg_results = list(ddgs.text(query, max_results=max_results))
             for r in ddg_results:
                 results.append({
